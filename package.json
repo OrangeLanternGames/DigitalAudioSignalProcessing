@@ -1,6 +1,7 @@
 {
   "name": "dial-in",
-  "version": "0.0.0",
+  "version": "1.0.0",
+  "description": "DIAL IN — 90s CRT audio puzzle terminal (Angular + three.js + anime.js)",
   "scripts": {
     "ng": "ng",
     "start": "ng serve",
