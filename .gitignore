@@ -12,3 +12,5 @@ server/storage/
 .angular/
 .vscode/*
 !.vscode/extensions.json
+TECHNICAL_OVERVIEW.md
+apicheck.md
