@@ -1,6 +1,7 @@
 import { AfterViewInit, Component, ElementRef, Input, OnDestroy, ViewChild } from '@angular/core';
 import { readVar } from '../core/util';
 import { Params, ParamKey, waveAt } from '../core/dial-model';
+import { WaveformPeaks } from '../core/audio-model';
 
 @Component({
   selector: 'app-wave-graph',
@@ -15,6 +16,8 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
   @Input() showOriginal = false;
   @Input() playing = false;
   @Input() manipulated = true;
+  @Input() playerPeaks?: WaveformPeaks | null;
+  @Input() targetPeaks?: WaveformPeaks | null;
 
   @ViewChild('cv') cvRef!: ElementRef<HTMLCanvasElement>;
 
@@ -59,6 +62,22 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
       ctx.beginPath(); ctx.moveTo(padX, midY); ctx.lineTo(W - padX, midY); ctx.stroke();
       ctx.globalAlpha = 1;
 
+      const drawPeaks = (peaks: WaveformPeaks, color: string, glow: number, alpha: number, dash?: number[]) => {
+        const values = peaks.samples || [];
+        if (values.length < 2) return;
+        ctx.beginPath();
+        for (let i = 0; i < values.length; i++) {
+          const t = i / (values.length - 1);
+          const px = padX + t * gx, py = midY - values[i] * (gy / 2) * 0.86;
+          i ? ctx.lineTo(px, py) : ctx.moveTo(px, py);
+        }
+        ctx.setLineDash(dash || []);
+        ctx.lineWidth = 2; ctx.globalAlpha = alpha;
+        ctx.shadowBlur = glow; ctx.shadowColor = color; ctx.strokeStyle = color; ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.shadowBlur = 0; ctx.globalAlpha = 1;
+      };
+
       const N = 260;
       const plot = (p: Params, color: string, glow: number, alpha: number, dash?: number[]) => {
         ctx.beginPath();
@@ -73,8 +92,13 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
         ctx.setLineDash([]);
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
       };
-      if (this.showOriginal) plot(this.target, orig, 11, 0.95, [7, 5]);
-      plot(this.player, fg, 8, this.showOriginal ? 0.8 : 1);
+      if (this.targetPeaks || this.playerPeaks) {
+        if (this.showOriginal && this.targetPeaks) drawPeaks(this.targetPeaks, orig, 11, 0.95, [7, 5]);
+        if (this.playerPeaks) drawPeaks(this.playerPeaks, fg, 8, this.showOriginal ? 0.8 : 1);
+      } else {
+        if (this.showOriginal) plot(this.target, orig, 11, 0.95, [7, 5]);
+        plot(this.player, fg, 8, this.showOriginal ? 0.8 : 1);
+      }
 
       if (this.playing) {
         this.scrub = (this.scrub + 0.012) % 1;
@@ -83,7 +107,8 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
         ctx.shadowBlur = 10; ctx.shadowColor = cssvar('--hi', '#eeffcc');
         ctx.beginPath(); ctx.moveTo(sx, padY); ctx.lineTo(sx, H - padY); ctx.stroke();
         ctx.shadowBlur = 0; ctx.globalAlpha = 1;
-        const yt = waveAt(this.scrub, this.player);
+        const values = this.playerPeaks?.samples;
+        const yt = values?.length ? values[Math.min(values.length - 1, Math.floor(this.scrub * values.length))] : waveAt(this.scrub, this.player);
         ctx.fillStyle = cssvar('--hi', '#eeffcc');
         ctx.beginPath(); ctx.arc(sx, midY - yt * (gy / 2) * 0.86, 3, 0, Math.PI * 2); ctx.fill();
       } else {

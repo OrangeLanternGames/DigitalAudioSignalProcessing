@@ -37,7 +37,7 @@ const SEED_SCORES: Score[] = [
           <app-difficulty [theme]="theme" (selected)="onSelectDiff($event)" (back)="flow('landing')"></app-difficulty>
         }
         @case ('game') {
-          <app-game [theme]="theme" [difficulty]="difficulty"
+          <app-game [theme]="theme" [difficulty]="difficulty" [volume]="volume"
                     (completed)="onComplete($event)" (exit)="flow('landing')"></app-game>
         }
       }
