@@ -14,3 +14,4 @@ server/storage/
 !.vscode/extensions.json
 TECHNICAL_OVERVIEW.md
 apicheck.md
+/media
