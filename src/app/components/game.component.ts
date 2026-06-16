@@ -149,7 +149,7 @@ type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
                 @if (audioRound) {
                   @for (f of playerFilters; track f.id) {
                     @for (p of f.params; track f.id + p.key) {
-                      <div class="slider">
+                      <div class="slider" [class.keysel]="isSelectedAudioParam(f, p)">
                         <div class="lab"><span>{{ codeForFilter(f) }} · {{ p.label }}</span><b>{{ dispParam(p) }}</b></div>
                         <input type="range" class="focusable" [min]="p.min" [max]="p.max" [step]="p.step"
                                [value]="p.value" (input)="setAudioParam(f, p, +$any($event.target).value)" [attr.aria-label]="p.label" />
@@ -158,7 +158,7 @@ type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
                   }
                 } @else {
                 @for (k of keys; track k) {
-                  <div class="slider">
+                  <div class="slider" [class.keysel]="selectedControlIndex === $index">
                     <div class="lab"><span>{{ P(k).code }} · {{ P(k).label }}</span><b>{{ P(k).disp(player[k]) }}</b></div>
                     <input type="range" class="focusable" [min]="P(k).min" [max]="P(k).max" [step]="step(k)"
                            [value]="player[k]" (input)="setKey(k, +$any($event.target).value)" [attr.aria-label]="P(k).label" />
@@ -218,6 +218,7 @@ export class GameComponent implements OnInit, OnDestroy {
   showOrig = false;
   computing = false;
   name = '';
+  selectedControlIndex = 0;
 
   code = hex(4);
   graphCode = hex(4);
@@ -392,8 +393,12 @@ export class GameComponent implements OnInit, OnDestroy {
 
   setAudioParam(filter: AudioFilterConfig, param: AudioFilterParam, value: number): void {
     this.playerFilters = this.playerFilters.map((f) =>
-      f.id === filter.id ? { ...f, params: f.params.map((p) => (p.key === param.key ? { ...p, value } : p)) } : f,
+      f.id === filter.id ? { ...f, params: f.params.map((p) => (p.key === param.key ? { ...p, value: this.clamp(value, p.min, p.max) } : p)) } : f,
     );
+  }
+
+  isSelectedAudioParam(filter: AudioFilterConfig, param: AudioFilterParam): boolean {
+    return this.audioParamRefs().findIndex((ref) => ref.filter.id === filter.id && ref.param.key === param.key) === this.selectedControlIndex;
   }
 
   dispParam(p: AudioFilterParam): string {
@@ -407,6 +412,58 @@ export class GameComponent implements OnInit, OnDestroy {
 
   private cloneFilters(filters: AudioFilterConfig[]): AudioFilterConfig[] {
     return filters.map((f) => ({ ...f, params: f.params.map((p) => ({ ...p })) }));
+  }
+
+  private audioParamRefs(): Array<{ filter: AudioFilterConfig; param: AudioFilterParam }> {
+    return this.playerFilters.flatMap((filter) => filter.params.map((param) => ({ filter, param })));
+  }
+
+  private controlCount(): number {
+    return this.audioRound ? this.audioParamRefs().length : this.keys.length;
+  }
+
+  private clamp(v: number, min: number, max: number): number {
+    return Math.max(min, Math.min(max, v));
+  }
+
+  private snap(value: number, step: number): number {
+    const decimals = Math.max(0, (String(step).split('.')[1] || '').length);
+    return Number(value.toFixed(Math.min(decimals + 2, 6)));
+  }
+
+  private selectControl(index: number): void {
+    const count = this.controlCount();
+    if (!count || index < 0 || index >= count) return;
+    this.selectedControlIndex = index;
+  }
+
+  private adjustSelectedControl(direction: 1 | -1): void {
+    const count = this.controlCount();
+    if (!count) return;
+    this.selectedControlIndex = Math.min(this.selectedControlIndex, count - 1);
+    if (this.audioRound) {
+      const ref = this.audioParamRefs()[this.selectedControlIndex];
+      if (!ref) return;
+      const next = this.snap(this.clamp(ref.param.value + ref.param.step * direction, ref.param.min, ref.param.max), ref.param.step);
+      this.setAudioParam(ref.filter, ref.param, next);
+      return;
+    }
+    const key = this.keys[this.selectedControlIndex];
+    if (!key) return;
+    const P = PARAMS[key];
+    const amount = this.step(key);
+    const next = this.snap(this.clamp(this.player[key] + amount * direction, P.min, P.max), amount);
+    this.setKey(key, next);
+  }
+
+  private shiftDelay(direction: 1 | -1): void {
+    const echo = this.playerFilters.find((filter) => filter.type === 'echo');
+    const delay = echo?.params.find((param) => param.key === 'delayMs');
+    if (!echo || !delay) return;
+    const next = this.snap(this.clamp(delay.value + delay.step * 10 * direction, delay.min, delay.max), delay.step);
+    this.setAudioParam(echo, delay, next);
+    const delayIndex = this.audioParamRefs().findIndex((ref) => ref.filter.id === echo.id && ref.param.key === delay.key);
+    if (delayIndex >= 0) this.selectedControlIndex = delayIndex;
   }
 
   goSign(): void {
@@ -430,12 +487,41 @@ export class GameComponent implements OnInit, OnDestroy {
 
   @HostListener('window:keydown', ['$event'])
   onKey(e: KeyboardEvent): void {
-    if ((e.target as HTMLElement).tagName === 'INPUT') return;
+    const target = e.target as HTMLInputElement;
+    if (target.tagName === 'INPUT' && target.type !== 'range') return;
     if (this.phase === 'listen' && (e.key === 'Enter' || e.key === ' ')) {
       e.preventDefault();
       this.playsLeft > 0 ? this.doListen() : this.doManipulate();
     }
-    if (this.phase === 'dial' && e.key === 'Enter') { e.preventDefault(); this.submit(); }
+    if (this.phase === 'dial') {
+      const key = e.key.toLowerCase();
+      if (/^[1-9]$/.test(key)) {
+        e.preventDefault();
+        this.selectControl(Number(key) - 1);
+        return;
+      }
+      if (key === 'w') {
+        e.preventDefault();
+        this.adjustSelectedControl(1);
+        return;
+      }
+      if (key === 's') {
+        e.preventDefault();
+        this.adjustSelectedControl(-1);
+        return;
+      }
+      if (key === 'r') {
+        e.preventDefault();
+        this.shiftDelay(1);
+        return;
+      }
+      if (key === 'e') {
+        e.preventDefault();
+        this.shiftDelay(-1);
+        return;
+      }
+      if (e.key === 'Enter') { e.preventDefault(); this.submit(); }
+    }
     if (e.key === 'Escape') this.exit.emit();
   }
 }

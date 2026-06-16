@@ -9,14 +9,16 @@ from fastapi import FastAPI, File, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from .dsp import TARGET_SR, generate_test_signal, load_wav, render_chain, save_wav, spectrum_score, waveform_peaks
+from .dsp import TARGET_SR, load_wav, render_chain, save_wav, spectrum_score, waveform_peaks
 from .models import AudioFileInfo, AudioFilterConfig, AudioRound, CreateRoundRequest, PreviewRequest, PreviewResponse, ScoreRequest, ScoreResponse, WaveformPeaks
 from .rounds import filters_to_plain, make_filters, parameter_score
 
 ROOT = Path(__file__).resolve().parents[1]
 STORAGE = ROOT / "storage"
+ASSETS = ROOT / "assets"
 UPLOADS = STORAGE / "uploads"
 ROUNDS = STORAGE / "rounds"
+DEFAULT_DEMO_AUDIO = ASSETS / "default_demo.wav"
 
 for directory in (UPLOADS, ROUNDS):
     directory.mkdir(parents=True, exist_ok=True)
@@ -54,10 +56,13 @@ def _audio_info(file_id: str, filename: str, signal_len: int) -> AudioFileInfo:
 
 
 def _ensure_demo_file() -> tuple[str, Path]:
-    file_id = "demo_signal"
+    file_id = "demo_piano"
     path = UPLOADS / f"{file_id}.wav"
-    if not path.exists():
-        save_wav(path, generate_test_signal())
+    if not DEFAULT_DEMO_AUDIO.exists():
+        raise HTTPException(status_code=500, detail="Default demo audio is missing")
+    if not path.exists() or DEFAULT_DEMO_AUDIO.stat().st_mtime > path.stat().st_mtime:
+        _sr, signal = load_wav(DEFAULT_DEMO_AUDIO)
+        save_wav(path, signal)
     return file_id, path
 
 
