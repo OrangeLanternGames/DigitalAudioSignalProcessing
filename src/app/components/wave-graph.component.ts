@@ -1,4 +1,4 @@
-import { AfterViewInit, Component, ElementRef, Input, OnDestroy, ViewChild } from '@angular/core';
+import { AfterViewInit, Component, ElementRef, Input, NgZone, OnDestroy, ViewChild } from '@angular/core';
 import { readVar } from '../core/util';
 import { Params, ParamKey, waveAt } from '../core/dial-model';
 import { WaveformPeaks } from '../core/audio-model';
@@ -26,7 +26,16 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
   private ro?: ResizeObserver;
   private scrub = 0;
 
+  constructor(private zone: NgZone) {}
+
   ngAfterViewInit(): void {
+    // Run the render loop outside Angular's zone so the per-frame rAF tick
+    // does not trigger app-wide change detection ~60×/s. The canvas reads the
+    // @Input fields directly each frame, so it stays in sync without CD.
+    this.zone.runOutsideAngular(() => this.start());
+  }
+
+  private start(): void {
     const canvas = this.cvRef.nativeElement;
     const ctx = canvas.getContext('2d')!;
     const cssvar = (n: string, f: string) => readVar(n, f);

@@ -148,8 +148,8 @@ type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
               <div [ngStyle]="{ display: 'grid', gridTemplateColumns: colTemplate, gap: '16px' }">
                 @if (audioRound) {
                   @for (f of playerFilters; track f.id) {
-                    @for (p of f.params; track f.id + p.key) {
-                      <div class="slider" [class.keysel]="isSelectedAudioParam(f, p)">
+                    @for (p of f.params; track p.key) {
+                      <div class="slider" [class.keysel]="f.id === selectedFilterId && p.key === selectedParamKey">
                         <div class="lab"><span>{{ codeForFilter(f) }} · {{ p.label }}</span><b>{{ dispParam(p) }}</b></div>
                         <input type="range" class="focusable" [min]="p.min" [max]="p.max" [step]="p.step"
                                [value]="p.value" (input)="setAudioParam(f, p, +$any($event.target).value)" [attr.aria-label]="p.label" />
@@ -219,6 +219,8 @@ export class GameComponent implements OnInit, OnDestroy {
   computing = false;
   name = '';
   selectedControlIndex = 0;
+  selectedFilterId = '';
+  selectedParamKey = '';
 
   code = hex(4);
   graphCode = hex(4);
@@ -241,6 +243,7 @@ export class GameComponent implements OnInit, OnDestroy {
         this.previewPeaks = round.waveform.preview;
         this.keys = [];
         this.apiUnavailable = false;
+        this.syncSelection();
       },
       error: () => {
         this.apiUnavailable = true;
@@ -392,13 +395,18 @@ export class GameComponent implements OnInit, OnDestroy {
   }
 
   setAudioParam(filter: AudioFilterConfig, param: AudioFilterParam, value: number): void {
-    this.playerFilters = this.playerFilters.map((f) =>
-      f.id === filter.id ? { ...f, params: f.params.map((p) => (p.key === param.key ? { ...p, value: this.clamp(value, p.min, p.max) } : p)) } : f,
-    );
+    // Mutate the live param object in place: the template iterates playerFilters,
+    // so `param` is already the bound instance. Keeping object identity stable
+    // avoids re-asserting [value] on the native range input mid-drag (thumb jump)
+    // and the O(N) array churn that recreation caused on every input event.
+    param.value = this.clamp(value, param.min, param.max);
   }
 
-  isSelectedAudioParam(filter: AudioFilterConfig, param: AudioFilterParam): boolean {
-    return this.audioParamRefs().findIndex((ref) => ref.filter.id === filter.id && ref.param.key === param.key) === this.selectedControlIndex;
+  private syncSelection(): void {
+    if (!this.audioRound) { this.selectedFilterId = ''; this.selectedParamKey = ''; return; }
+    const ref = this.audioParamRefs()[this.selectedControlIndex];
+    this.selectedFilterId = ref?.filter.id ?? '';
+    this.selectedParamKey = ref?.param.key ?? '';
   }
 
   dispParam(p: AudioFilterParam): string {
@@ -435,12 +443,14 @@ export class GameComponent implements OnInit, OnDestroy {
     const count = this.controlCount();
     if (!count || index < 0 || index >= count) return;
     this.selectedControlIndex = index;
+    this.syncSelection();
   }
 
   private adjustSelectedControl(direction: 1 | -1): void {
     const count = this.controlCount();
     if (!count) return;
     this.selectedControlIndex = Math.min(this.selectedControlIndex, count - 1);
+    this.syncSelection();
     if (this.audioRound) {
       const ref = this.audioParamRefs()[this.selectedControlIndex];
       if (!ref) return;
@@ -463,7 +473,7 @@ export class GameComponent implements OnInit, OnDestroy {
     const next = this.snap(this.clamp(delay.value + delay.step * 10 * direction, delay.min, delay.max), delay.step);
     this.setAudioParam(echo, delay, next);
     const delayIndex = this.audioParamRefs().findIndex((ref) => ref.filter.id === echo.id && ref.param.key === delay.key);
-    if (delayIndex >= 0) this.selectedControlIndex = delayIndex;
+    if (delayIndex >= 0) { this.selectedControlIndex = delayIndex; this.syncSelection(); }
   }
 
   goSign(): void {
