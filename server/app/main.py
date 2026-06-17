@@ -182,7 +182,9 @@ def score_round(round_id: str, req: ScoreRequest) -> ScoreResponse:
     param_score, details = parameter_score(
         target_filters,
         req.filters,
+        meta.get("difficulty", "medium"),
     )
     spec = round(spectrum_score(target, player), 2)
-    final = round(param_score * 0.65 + spec * 0.35, 1)
+    # Parameter-dominant: a clean dial reads ~100% even if the FFT match is noisier.
+    final = round(param_score * 0.8 + spec * 0.2, 1)
     return ScoreResponse(score=final, parameterScore=round(param_score, 2), spectrumScore=spec, details=details)
