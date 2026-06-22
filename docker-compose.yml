@@ -1,0 +1,20 @@
+services:
+  api:
+    build:
+      context: ./server
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./server/storage:/app/storage
+  frontend:
+    image: node:22-slim
+    working_dir: /app
+    command: sh -c "npm install && npm start -- --host 0.0.0.0"
+    ports:
+      - "4200:4200"
+    volumes:
+      - ./:/app
+    environment:
+      - API_BASE_URL=http://api:8000
+    depends_on:
+      - api
