@@ -18,6 +18,9 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
   @Input() manipulated = true;
   @Input() playerPeaks?: WaveformPeaks | null;
   @Input() targetPeaks?: WaveformPeaks | null;
+  // Returns the real playback position (0..1) each frame. When absent (e.g. the
+  // mock has no audio), the playhead falls back to a decorative sweep.
+  @Input() progressFn?: () => number | null;
 
   @ViewChild('cv') cvRef!: ElementRef<HTMLCanvasElement>;
 
@@ -40,6 +43,11 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
     const ctx = canvas.getContext('2d')!;
     const cssvar = (n: string, f: string) => readVar(n, f);
 
+    // Inputs seen on the last paint. The render loop spins every frame (cheap),
+    // but only repaints when something actually changed or while playing (the
+    // scrub line animates). This avoids redrawing the grid + glow (shadowBlur)
+    // 60×/s when the graph is static — the main idle cost.
+    let last: any = {};
     const resize = () => {
       const r = canvas.parentElement!.getBoundingClientRect();
       const dpr = Math.min(window.devicePixelRatio, 2);
@@ -48,6 +56,7 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
       canvas.style.width = r.width + 'px';
       canvas.style.height = r.height + 'px';
       ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      last = {}; // force a repaint at the new size
     };
     resize();
     this.ro = new ResizeObserver(resize);
@@ -55,6 +64,16 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
 
     const draw = () => {
       if (!this.mounted) return;
+      const dirty = this.playing
+        || last.pp !== this.playerPeaks || last.tp !== this.targetPeaks
+        || last.pl !== this.player || last.tg !== this.target
+        || last.so !== this.showOriginal || last.mp !== this.manipulated
+        || last.pg !== this.playing;
+      if (!dirty) { this.raf = requestAnimationFrame(draw); return; }
+      last = {
+        pp: this.playerPeaks, tp: this.targetPeaks, pl: this.player, tg: this.target,
+        so: this.showOriginal, mp: this.manipulated, pg: this.playing,
+      };
       const W = canvas.clientWidth, H = canvas.clientHeight;
       const fg = cssvar('--wave', '#bedc7f'), orig = cssvar('--orig', '#eeffcc'),
             line = cssvar('--line', '#305d42');
@@ -110,7 +129,10 @@ export class WaveGraphComponent implements AfterViewInit, OnDestroy {
       }
 
       if (this.playing) {
-        this.scrub = (this.scrub + 0.012) % 1;
+        // Real playback position when available (one pass 0→1 over the clip,
+        // tied to its length); decorative sweep otherwise (mock, no audio).
+        const p = this.progressFn ? this.progressFn() : null;
+        this.scrub = p == null ? (this.scrub + 0.012) % 1 : p;
         const sx = padX + this.scrub * gx;
         ctx.strokeStyle = cssvar('--hi', '#eeffcc'); ctx.globalAlpha = 0.9; ctx.lineWidth = 1.5;
         ctx.shadowBlur = 10; ctx.shadowColor = cssvar('--hi', '#eeffcc');

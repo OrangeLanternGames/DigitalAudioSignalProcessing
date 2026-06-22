@@ -13,9 +13,16 @@
 
 export const NUM_TAPS = 255;
 export const MAX_SECONDS = 60;
-// Reduced rate keeps the FFT cheap while leaving the 4 kHz treble band well
-// below Nyquist (8 kHz) so the EQ stays meaningful.
-export const CLIENT_SR = 16000;
+// Match the backend rate (dsp.TARGET_SR) so the in-browser render is numerically
+// identical to the server (verified: ~1e-5 peak deviation). A lower rate makes
+// the FFT cheaper but introduces a visible rate-mismatch deviation (~6-13% RMS
+// at 16 kHz) AND a jump when the graph switches from the live client render to
+// the server PREVIEW. Cost at 44.1 kHz for the ~19 s demo: ~210 ms one-off
+// precompute per round, ~83 ms per debounced render — well within the 150 ms
+// debounce. For very long clips (towards MAX_SECONDS) this grows ~linearly;
+// drop to 22050 (factor-2 resample, still cheap, ~half the deviation of 16 k)
+// if memory/latency on a 60 s upload ever becomes an issue.
+export const CLIENT_SR = 44100;
 export const BANDS = ['bass', 'lowMid', 'highMid', 'treble'] as const;
 
 // --- FIR design (port of dsp.py _lp_fir / _hp_fir / _bp_fir / build_filters) -

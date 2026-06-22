@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import random
+import re
 import shutil
 import uuid
 from pathlib import Path
@@ -18,7 +20,6 @@ STORAGE = ROOT / "storage"
 ASSETS = ROOT / "assets"
 UPLOADS = STORAGE / "uploads"
 ROUNDS = STORAGE / "rounds"
-DEFAULT_DEMO_AUDIO = ASSETS / "default_demo.wav"
 
 for directory in (UPLOADS, ROUNDS):
     directory.mkdir(parents=True, exist_ok=True)
@@ -55,15 +56,29 @@ def _audio_info(file_id: str, filename: str, signal_len: int) -> AudioFileInfo:
     )
 
 
-def _ensure_demo_file() -> tuple[str, Path]:
-    file_id = "demo_piano"
+def _asset_file_id(asset: Path) -> str:
+    # Stable, URL-safe id derived from the filename so the same asset always maps
+    # to the same /api/audio/{id} and its normalised copy can be cached.
+    stem = re.sub(r"[^A-Za-z0-9_-]", "_", asset.stem)
+    return f"asset_{stem}"
+
+
+def _ensure_asset_loaded(asset: Path) -> tuple[str, Path]:
+    file_id = _asset_file_id(asset)
     path = UPLOADS / f"{file_id}.wav"
-    if not DEFAULT_DEMO_AUDIO.exists():
-        raise HTTPException(status_code=500, detail="Default demo audio is missing")
-    if not path.exists() or DEFAULT_DEMO_AUDIO.stat().st_mtime > path.stat().st_mtime:
-        _sr, signal = load_wav(DEFAULT_DEMO_AUDIO)
+    if not path.exists() or asset.stat().st_mtime > path.stat().st_mtime:
+        _sr, signal = load_wav(asset)
         save_wav(path, signal)
     return file_id, path
+
+
+def _pick_random_source() -> tuple[str, Path]:
+    # Directory scan, so dropping more .wav files into assets/ (or wiring up the
+    # upload flow) needs no code change — they are picked up automatically.
+    assets = sorted(ASSETS.glob("*.wav"))
+    if not assets:
+        raise HTTPException(status_code=500, detail="No source audio found in assets/")
+    return _ensure_asset_loaded(random.choice(assets))
 
 
 def _wave(signal) -> WaveformPeaks:
@@ -102,7 +117,7 @@ def get_audio(file_id: str) -> FileResponse:
 
 @app.post("/api/rounds", response_model=AudioRound)
 def create_round(req: CreateRoundRequest) -> AudioRound:
-    file_id, source_path = (req.fileId, UPLOADS / f"{req.fileId}.wav") if req.fileId else _ensure_demo_file()
+    file_id, source_path = (req.fileId, UPLOADS / f"{req.fileId}.wav") if req.fileId else _pick_random_source()
     if not file_id or not source_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found")
 
@@ -176,9 +191,14 @@ def render_preview(round_id: str, req: PreviewRequest) -> PreviewResponse:
 def score_round(round_id: str, req: ScoreRequest) -> ScoreResponse:
     meta = _load_round(round_id)
     _sr, source = load_wav(Path(meta["sourcePath"]))
-    _sr_t, target = load_wav(Path(meta["targetPath"]))
-    player = render_chain(source, [f.model_dump() for f in req.filters])
     target_filters = [AudioFilterConfig.model_validate(f) for f in meta["targetFilters"]]
+    # Render the target fresh from its filters instead of loading the saved
+    # target.wav: the on-disk file is int16-quantised, and the dB-domain spectrum
+    # score is so sensitive to that quantisation in quiet bins that even a perfect
+    # reconstruction would be penalised. Comparing float render vs float render
+    # measures filter closeness cleanly. DSP unchanged.
+    target = render_chain(source, filters_to_plain(target_filters))
+    player = render_chain(source, [f.model_dump() for f in req.filters])
     param_score, details = parameter_score(
         target_filters,
         req.filters,

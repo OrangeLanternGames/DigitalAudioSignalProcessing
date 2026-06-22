@@ -110,7 +110,7 @@ type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
           </div>
           <div style="position:absolute;inset:0">
             <app-wave-graph [player]="phase === 'listen' ? round.target : player" [target]="round.target"
-                            [keys]="keys" [showOriginal]="showOrig" [playing]="playing"
+                            [keys]="keys" [showOriginal]="showOrig" [playing]="playing" [progressFn]="progressFn"
                             [targetPeaks]="targetPeaks" [playerPeaks]="phase === 'listen' ? targetPeaks : previewPeaks"></app-wave-graph>
           </div>
           <div style="position:absolute;bottom:6px;left:12px;font-size:9px;color:var(--dim);z-index:2">
@@ -142,7 +142,7 @@ type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
               <div class="spread">
                 <span class="dim" style="font-size:9px">DIAL EACH SLIDER TO MATCH THE ORIGINAL FROM MEMORY</span>
                 <div style="display:flex;gap:10px">
-                  <button class="btn sm focusable" (click)="preview()">{{ playing ? '■ STOP' : '▶ PREVIEW' }}</button>
+                  <button class="btn sm focusable" (click)="preview()">{{ previewLoading ? '… RENDERING' : playing ? '■ STOP' : '▶ PREVIEW' }}</button>
                   <button class="btn focusable" (click)="submit()">SUBMIT ▸</button>
                 </div>
               </div>
@@ -206,6 +206,7 @@ export class GameComponent implements OnInit, OnDestroy {
   round!: Round;
   audioRound?: AudioRound;
   playerFilters: AudioFilterConfig[] = [];
+  scrambleFilters: AudioFilterConfig[] = []; // off-target start applied on MANIPULATE
   scoreDetails: ScoreDetail[] = [];
   targetPeaks?: WaveformPeaks;
   previewPeaks?: WaveformPeaks;
@@ -215,6 +216,7 @@ export class GameComponent implements OnInit, OnDestroy {
   playsLeft = 3;
   player: Params = {};
   playing = false;
+  previewLoading = false;
   pct = 0;
   showOrig = false;
   computing = false;
@@ -226,6 +228,10 @@ export class GameComponent implements OnInit, OnDestroy {
   code = hex(4);
   graphCode = hex(4);
   matchCode = hex(3);
+
+  // Real playback position (0..1) for the graph playhead; null in mock mode
+  // (no audio) so it falls back to the decorative sweep.
+  readonly progressFn = (): number | null => (this.audioRound ? this.audio.progress : null);
 
   private playTimer: any;
   private countTimer: any;
@@ -241,9 +247,14 @@ export class GameComponent implements OnInit, OnDestroy {
     this.api.createRound(this.difficulty).subscribe({
       next: (round) => {
         this.audioRound = round;
-        this.playerFilters = this.cloneFilters(round.playerFilters);
+        // Start the player ON the original (target): during LISTEN the signal is
+        // intact. The off-target scramble is applied only on MANIPULATE, so the
+        // player then dials back to reconstruct the original. Mirrors the mock
+        // (player starts at round.target, doManipulate moves it to round.player).
+        this.scrambleFilters = round.playerFilters;
+        this.playerFilters = this.cloneFilters(round.targetFilters);
         this.targetPeaks = round.waveform.target;
-        this.previewPeaks = round.waveform.preview;
+        this.previewPeaks = round.waveform.target; // intact graph until manipulate
         this.keys = [];
         this.apiUnavailable = false;
         this.syncSelection();
@@ -293,7 +304,9 @@ export class GameComponent implements OnInit, OnDestroy {
     if (this.playsLeft <= 0 || this.playing) return;
     if (this.audioRound) {
       this.playing = true;
-      this.audio.play(this.api.absoluteUrl(this.audioRound.targetUrl), this.volume, () => {
+      // PLAY ORIGINAL = the clean, unprocessed source. The player memorises this,
+      // then (after MANIPULATE) dials the random effects back out to restore it.
+      this.audio.play(this.api.absoluteUrl(this.audioRound.sourceUrl), this.volume, () => {
         this.playing = false;
         this.playsLeft--;
       });
@@ -309,7 +322,7 @@ export class GameComponent implements OnInit, OnDestroy {
 
   doManipulate(): void {
     if (this.audioRound) {
-      this.phase = 'dial';
+      this.scrambleAudioFilters();
       return;
     }
     if (this.difficulty === 'easy') {
@@ -333,17 +346,55 @@ export class GameComponent implements OnInit, OnDestroy {
     }, 1050);
   }
 
+  // Backend rounds: apply the manipulation on MANIPULATE (all difficulties).
+  // Enter the dial phase showing the intact original, sweep the sliders from the
+  // target (original) to the off-target scramble start, then settle so the
+  // player can reconstruct the original. Backend/scoring untouched.
+  private scrambleAudioFilters(): void {
+    this.phase = 'dial';
+    this.syncSelection();
+    const refs = this.audioParamRefs();
+    const from = refs.map((r) => r.param.value); // intact == target
+    const to = refs.map((r) => {
+      const f = this.scrambleFilters.find((x) => x.type === r.filter.type);
+      const p = f?.params.find((x) => x.key === r.param.key);
+      return this.clamp(p ? Number(p.value) : r.param.value, r.param.min, r.param.max);
+    });
+    const proxy = { t: 0 };
+    animate(proxy, {
+      t: 1,
+      duration: 900,
+      ease: 'inOutQuad',
+      onUpdate: () => {
+        refs.forEach((r, i) => (r.param.value = from[i] + (to[i] - from[i]) * proxy.t));
+      },
+    });
+    setTimeout(() => {
+      refs.forEach((r, i) => (r.param.value = to[i]));
+      // Snap the graph to the scrambled state (exact backend render of the start).
+      this.previewPeaks = this.audioRound?.waveform.preview ?? this.previewPeaks;
+      this.syncSelection();
+    }, 950);
+  }
+
   preview(): void {
     if (!this.audioRound) {
       this.playing = !this.playing;
       return;
     }
-    if (this.playing) {
+    // Toggle off: stop playback, or cancel an in-flight render (the seq bump
+    // below makes any pending response a no-op).
+    if (this.playing || this.previewLoading) {
       this.audio.stop();
       this.playing = false;
+      this.previewLoading = false;
+      this.previewSeq++;
       return;
     }
-    this.playing = true;
+    // The backend render can take a few seconds (echo + distortion on a long
+    // clip). Show a RENDERING state now, but do NOT start the scrub animation:
+    // `playing` flips on only when the audio actually begins (onStarted).
+    this.previewLoading = true;
     // Supersede any pending/in-flight debounced graph render so its (older)
     // peaks cannot land after this explicit preview.
     clearTimeout(this.graphTimer);
@@ -352,10 +403,19 @@ export class GameComponent implements OnInit, OnDestroy {
       .pipe(finalize(() => {}))
       .subscribe({
         next: (res) => {
-          if (seq === this.previewSeq) this.previewPeaks = res.waveform;
-          this.audio.play(this.api.absoluteUrl(res.previewUrl), this.volume, () => (this.playing = false));
+          if (seq !== this.previewSeq) return; // superseded or cancelled
+          this.previewPeaks = res.waveform;
+          // Stay in RENDERING until the audio truly starts (covers backend
+          // compute + file buffering), then flip straight to playing.
+          this.audio.play(
+            this.api.absoluteUrl(res.previewUrl),
+            this.volume,
+            () => { this.playing = false; this.previewLoading = false; },
+            () => { this.playing = true; this.previewLoading = false; },
+          );
         },
         error: () => {
+          this.previewLoading = false;
           this.playing = false;
         },
       });
@@ -425,22 +485,23 @@ export class GameComponent implements OnInit, OnDestroy {
 
   private renderGraphPreview(): void {
     if (!this.audioRound) return;
-    // Preferred path: in-browser DSP approximation — no network in the hot path.
-    // The score and the actual played audio still come from the server, so this
-    // is display-only and a small deviation from the backend render is fine.
+    const seq = ++this.previewSeq;
+    // Preferred path: in-browser DSP approximation in a Web Worker — no network
+    // AND no main-thread blocking in the hot path. The score and the actual
+    // played audio still come from the server, so this is display-only and a
+    // small deviation from the backend render is fine.
     if (this.clientDsp.ready) {
-      const samples = this.clientDsp.renderPeaks(this.playerFilters);
-      if (samples.length) {
+      this.clientDsp.renderPeaks(this.playerFilters).then((samples) => {
+        if (seq !== this.previewSeq || !samples.length) return; // superseded
         this.previewPeaks = {
           samples,
           sampleRate: this.clientDsp.sampleRate,
           durationSec: this.clientDsp.durationSec,
         };
-      }
+      });
       return;
     }
     // Fallback: server render when the client buffer is not (yet) available.
-    const seq = ++this.previewSeq;
     this.api.renderPreview(this.audioRound.sessionId, this.playerFilters).subscribe({
       next: (res) => {
         // Drop stale responses: a newer edit already bumped previewSeq, so this
