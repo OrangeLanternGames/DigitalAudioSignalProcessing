@@ -228,6 +228,8 @@ export class GameComponent implements OnInit, OnDestroy {
 
   private playTimer: any;
   private countTimer: any;
+  private graphTimer: any;
+  private previewSeq = 0;
 
   constructor(private api: AudioApiService, private audio: AudioPlayerService) {}
 
@@ -254,6 +256,7 @@ export class GameComponent implements OnInit, OnDestroy {
   ngOnDestroy(): void {
     clearTimeout(this.playTimer);
     clearInterval(this.countTimer);
+    clearTimeout(this.graphTimer);
     this.audio.stop();
   }
 
@@ -337,11 +340,15 @@ export class GameComponent implements OnInit, OnDestroy {
       return;
     }
     this.playing = true;
+    // Supersede any pending/in-flight debounced graph render so its (older)
+    // peaks cannot land after this explicit preview.
+    clearTimeout(this.graphTimer);
+    const seq = ++this.previewSeq;
     this.api.renderPreview(this.audioRound.sessionId, this.playerFilters)
       .pipe(finalize(() => {}))
       .subscribe({
         next: (res) => {
-          this.previewPeaks = res.waveform;
+          if (seq === this.previewSeq) this.previewPeaks = res.waveform;
           this.audio.play(this.api.absoluteUrl(res.previewUrl), this.volume, () => (this.playing = false));
         },
         error: () => {
@@ -400,6 +407,29 @@ export class GameComponent implements OnInit, OnDestroy {
     // avoids re-asserting [value] on the native range input mid-drag (thumb jump)
     // and the O(N) array churn that recreation caused on every input event.
     param.value = this.clamp(value, param.min, param.max);
+    this.scheduleGraphRender();
+  }
+
+  // Live-couple the WAV graph to the sliders: re-render the preview waveform
+  // (peaks only, no audio) shortly after the last edit. Debounced so a drag
+  // does not fire one backend render per input event.
+  private scheduleGraphRender(): void {
+    if (!this.audioRound || this.phase !== 'dial') return;
+    clearTimeout(this.graphTimer);
+    this.graphTimer = setTimeout(() => this.renderGraphPreview(), 200);
+  }
+
+  private renderGraphPreview(): void {
+    if (!this.audioRound) return;
+    const seq = ++this.previewSeq;
+    this.api.renderPreview(this.audioRound.sessionId, this.playerFilters).subscribe({
+      next: (res) => {
+        // Drop stale responses: a newer edit already bumped previewSeq, so this
+        // result is out of date and would otherwise overwrite the latest peaks.
+        if (seq === this.previewSeq) this.previewPeaks = res.waveform;
+      },
+      error: () => {},
+    });
   }
 
   private syncSelection(): void {
