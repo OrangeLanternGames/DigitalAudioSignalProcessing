@@ -13,6 +13,7 @@ import { hex } from '../core/util';
 import { AudioFilterConfig, AudioFilterParam, AudioRound, ScoreDetail, WaveformPeaks } from '../core/audio-model';
 import { AudioApiService } from '../core/audio-api.service';
 import { AudioPlayerService } from '../core/audio-player.service';
+import { ClientDspService } from '../core/client-dsp.service';
 
 type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
 
@@ -231,7 +232,7 @@ export class GameComponent implements OnInit, OnDestroy {
   private graphTimer: any;
   private previewSeq = 0;
 
-  constructor(private api: AudioApiService, private audio: AudioPlayerService) {}
+  constructor(private api: AudioApiService, private audio: AudioPlayerService, private clientDsp: ClientDspService) {}
 
   ngOnInit(): void {
     this.round = makeRound(this.difficulty);
@@ -246,6 +247,9 @@ export class GameComponent implements OnInit, OnDestroy {
         this.keys = [];
         this.apiUnavailable = false;
         this.syncSelection();
+        // Decode the source once so slider drags can re-render the preview
+        // graph in-browser (no per-edit network). Server stays the fallback.
+        this.clientDsp.loadSource(this.api.absoluteUrl(round.sourceUrl)).catch(() => {});
       },
       error: () => {
         this.apiUnavailable = true;
@@ -412,15 +416,30 @@ export class GameComponent implements OnInit, OnDestroy {
 
   // Live-couple the WAV graph to the sliders: re-render the preview waveform
   // (peaks only, no audio) shortly after the last edit. Debounced so a drag
-  // does not fire one backend render per input event.
+  // does not fire one render per input event.
   private scheduleGraphRender(): void {
     if (!this.audioRound || this.phase !== 'dial') return;
     clearTimeout(this.graphTimer);
-    this.graphTimer = setTimeout(() => this.renderGraphPreview(), 200);
+    this.graphTimer = setTimeout(() => this.renderGraphPreview(), 150);
   }
 
   private renderGraphPreview(): void {
     if (!this.audioRound) return;
+    // Preferred path: in-browser DSP approximation — no network in the hot path.
+    // The score and the actual played audio still come from the server, so this
+    // is display-only and a small deviation from the backend render is fine.
+    if (this.clientDsp.ready) {
+      const samples = this.clientDsp.renderPeaks(this.playerFilters);
+      if (samples.length) {
+        this.previewPeaks = {
+          samples,
+          sampleRate: this.clientDsp.sampleRate,
+          durationSec: this.clientDsp.durationSec,
+        };
+      }
+      return;
+    }
+    // Fallback: server render when the client buffer is not (yet) available.
     const seq = ++this.previewSeq;
     this.api.renderPreview(this.audioRound.sessionId, this.playerFilters).subscribe({
       next: (res) => {
