@@ -9,7 +9,9 @@ export interface ParamDesc {
 
 export type ParamKey = 'freq' | 'amp' | 'phase' | 'harm' | 'drive';
 export type Params = Record<string, number>;
-export type Difficulty = 'easy' | 'medium' | 'hard';
+// A "mode" selects which manipulation a round uses: one of the three filters, or
+// "random" which combines two of them. Named Difficulty for backwards compat.
+export type Difficulty = 'eq4' | 'echo' | 'distortion' | 'random' | 'all';
 
 export const PARAMS: Record<string, ParamDesc> = {
   freq:  { key: 'freq',  label: 'FREQUENCY', code: 'FRQ', min: 0.6, max: 5.0,         disp: (v) => (v * 44.1).toFixed(0) + 'hz' },
@@ -19,17 +21,23 @@ export const PARAMS: Record<string, ParamDesc> = {
   drive: { key: 'drive', label: 'DRIVE',     code: 'DRV', min: 0,   max: 1.0,         disp: (v) => (v * 100).toFixed(0) + '%' },
 };
 
+// Used only by the offline/mock fallback (makeRound) to decide which sine-wave
+// params get scrambled when the audio API is unavailable.
 export const DIFF_KEYS: Record<Difficulty, ParamKey[]> = {
-  easy:   ['freq'],
-  medium: ['freq', 'amp', 'phase'],
-  hard:   ['freq', 'amp', 'phase', 'harm', 'drive'],
+  eq4:        ['freq', 'amp', 'phase', 'harm'],
+  echo:       ['freq', 'amp', 'phase'],
+  distortion: ['drive', 'amp'],
+  random:     ['freq', 'amp', 'phase'],
+  all:        ['freq', 'amp', 'phase', 'harm', 'drive'],
 };
 
 export interface DiffMeta { name: string; sliders: number; label: string; desc: string; }
 export const DIFF_META: Record<Difficulty, DiffMeta> = {
-  easy:   { name: 'EASY',   sliders: 1, label: '01 SIGNAL DRIFT', desc: 'ONE MANIPULATION.\nGENTLE WARM-UP.' },
-  medium: { name: 'MEDIUM', sliders: 3, label: '03 PHASE SHIFT',  desc: 'THREE MANIPULATIONS.\nTRUST YOUR EARS.' },
-  hard:   { name: 'HARD',   sliders: 5, label: '05 FULL SCRAMBLE', desc: 'FIVE MANIPULATIONS.\nNO MERCY.' },
+  eq4:        { name: '4-BAND FIR EQ', sliders: 4, label: 'FREQUENCY SHAPING', desc: 'FOUR EQ BANDS.\nSCULPT THE TONE.' },
+  echo:       { name: 'ECHO DELAY',    sliders: 3, label: 'TIME / FEEDBACK',   desc: 'DELAY, FEEDBACK,\nMIX. TAME THE TAIL.' },
+  distortion: { name: 'DISTORTION',    sliders: 2, label: 'DRIVE / OUTPUT',    desc: 'DRIVE AND OUTPUT.\nDIAL OUT THE GRIT.' },
+  random:     { name: 'RANDOM',        sliders: 2, label: 'TWO COMBINED',      desc: 'TWO RANDOM FILTERS\nCHAINED TOGETHER.' },
+  all:        { name: '1 OUT OF A 100', sliders: 5, label: 'EVERY FILTER',     desc: 'ALL FILTERS AT ONCE.\nNO MERCY.' },
 };
 
 export interface Round { keys: ParamKey[]; target: Params; player: Params; }
@@ -48,7 +56,7 @@ export function waveAt(t: number, p: Params): number {
 }
 
 export function makeRound(diff: Difficulty): Round {
-  const keys = DIFF_KEYS[diff] || DIFF_KEYS.easy;
+  const keys = DIFF_KEYS[diff] || DIFF_KEYS.eq4;
   const target: Params = {
     freq: rand(1.2, 3.6), amp: rand(0.55, 0.95), phase: rand(0, Math.PI * 2),
     harm: rand(0.15, 0.8), drive: rand(0.1, 0.7),

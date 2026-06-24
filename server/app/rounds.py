@@ -15,7 +15,9 @@ from .models import AudioFilterConfig, AudioFilterParam, Difficulty, ScoreDetail
 # near-exact dial reads as a clean 100%. Larger TOL_FRACTION = more forgiving.
 TOL_FRACTION = 0.18          # sigma as a fraction of each parameter's span
 PERFECT_FRACTION = 0.03      # |error| within this fraction of span => full 100%
-DIFFICULTY_TOL = {"easy": 1.25, "medium": 1.0, "hard": 0.8}  # gentle progression
+# Per-mode scoring tolerance: single filters are forgiving, the combined "random"
+# mode is a touch stricter. Unknown modes fall back to 1.0 via .get().
+DIFFICULTY_TOL = {"eq4": 1.0, "echo": 1.0, "distortion": 1.0, "random": 0.9, "all": 0.8}
 
 
 PARAM_RANGES: dict[str, dict[str, tuple[float, float, float, str | None, str]]] = {
@@ -37,11 +39,26 @@ PARAM_RANGES: dict[str, dict[str, tuple[float, float, float, str | None, str]]] 
 }
 
 FILTER_LABELS = {"eq4": "4-Band FIR EQ", "echo": "Echo Delay", "distortion": "Distortion"}
-DIFFICULTY_FILTERS: dict[Difficulty, list[str]] = {
-    "easy": ["eq4"],
-    "medium": ["eq4", "echo"],
-    "hard": ["eq4", "echo", "distortion"],
+ALL_FILTERS = ["eq4", "echo", "distortion"]
+# Each mode maps to the filter(s) the round uses. "random" is resolved per-round
+# in filters_for_mode() to a random pair, so it is not listed here.
+DIFFICULTY_FILTERS: dict[str, list[str]] = {
+    "eq4": ["eq4"],
+    "echo": ["echo"],
+    "distortion": ["distortion"],
 }
+
+
+def filters_for_mode(mode: str, rng: random.Random) -> list[str]:
+    """Which filters a round uses. 'random' picks two distinct filters and 'all'
+    uses every filter, both kept in the canonical eq4->echo->distortion order so
+    the chain/UI stay consistent."""
+    if mode == "all":
+        return list(ALL_FILTERS)
+    if mode == "random":
+        chosen = set(rng.sample(ALL_FILTERS, 2))
+        return [f for f in ALL_FILTERS if f in chosen]
+    return DIFFICULTY_FILTERS.get(mode, ["eq4"])
 
 
 def _param(filter_type: str, key: str, value: float) -> AudioFilterParam:
@@ -70,9 +87,9 @@ def make_filters(difficulty: Difficulty) -> tuple[list[AudioFilterConfig], list[
     rng = random.Random()
     target: list[AudioFilterConfig] = []  # clean goal (what the player restores to)
     player: list[AudioFilterConfig] = []  # manipulated start (applied on MANIPULATE)
-    eq_span = 7.0 if difficulty == "easy" else 10.0
+    eq_span = 10.0
 
-    for filter_type in DIFFICULTY_FILTERS[difficulty]:
+    for filter_type in filters_for_mode(difficulty, rng):
         goal_params: list[AudioFilterParam] = []
         start_params: list[AudioFilterParam] = []
         for key, (mn, mx, _step, _unit, _label) in PARAM_RANGES[filter_type].items():
@@ -121,7 +138,7 @@ def _param_accuracy(target_param: AudioFilterParam, player_value: float, difficu
 def parameter_score(
     target: list[AudioFilterConfig],
     player: list[AudioFilterConfig],
-    difficulty: Difficulty = "medium",
+    difficulty: Difficulty = "eq4",
 ) -> tuple[float, list[ScoreDetail]]:
     player_by_type = {f.type: f for f in player}
     details: list[ScoreDetail] = []

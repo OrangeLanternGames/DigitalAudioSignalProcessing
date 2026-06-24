@@ -104,15 +104,23 @@ def apply_echo(signal: np.ndarray, delay_ms: float, feedback: float, mix: float)
     fb = float(np.clip(feedback, 0.0, 0.85))
     wet_mix = float(np.clip(mix, 0.0, 0.8))
     # Performance: a feedback echo is the IIR recurrence y[n] = x[n] + fb*y[n-delay].
-    # A per-sample Python loop is O(N) interpreted (up to ~2.6M iterations for a 60s
-    # clip) and runs on every round-create, preview and score request. We express the
-    # same recurrence as a transfer function 1 / (1 - fb*z^-delay) and let
-    # scipy.signal.lfilter run it in compiled C (~100x faster). Stable by construction:
-    # fb is clipped to < 1, so all poles stay inside the unit circle.
-    a = np.zeros(delay + 1, dtype=np.float64)
-    a[0] = 1.0
-    a[delay] = -fb
-    wet = lfilter([1.0], a, signal.astype(np.float64))
+    # Expressing it as the single transfer function 1 / (1 - fb*z^-delay) and feeding
+    # that to lfilter is a trap: lfilter walks every one of the `delay`+1 denominator
+    # coefficients (mostly zeros) per output sample, so it costs O(N*delay) — for a 60s
+    # clip and a 520ms delay that is ~6e10 ops, far slower than the naive O(N) loop.
+    #
+    # Instead note the recurrence only couples samples `delay` apart, i.e. it is `delay`
+    # INDEPENDENT first-order IIR filters, one per phase r = n mod delay. Reshape the
+    # signal into rows of length `delay` (so each column is one phase) and run a single
+    # order-1 filter down the columns in compiled C: total work O(N), identical result.
+    # Stable by construction: fb is clipped to < 1, so the pole stays inside the unit circle.
+    x = signal.astype(np.float64)
+    n = x.size
+    pad = (-n) % delay
+    if pad:
+        x = np.concatenate([x, np.zeros(pad, dtype=np.float64)])
+    cols = x.reshape(-1, delay)  # row i, column r -> sample i*delay + r
+    wet = lfilter([1.0], [1.0, -fb], cols, axis=0).reshape(-1)[:n]
     return normalize(signal * (1.0 - wet_mix) + wet * wet_mix)
 
 
