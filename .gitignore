@@ -6,6 +6,12 @@ npm-debug.log
 yarn-error.log
 .DS_Store
 Thumbs.db
+__pycache__/
+*.py[cod]
+server/storage/
 .angular/
 .vscode/*
 !.vscode/extensions.json
+TECHNICAL_OVERVIEW.md
+apicheck.md
+/media
