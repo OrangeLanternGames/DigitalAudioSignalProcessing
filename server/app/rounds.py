@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import random
-from copy import deepcopy
 from math import exp
 from typing import Any
 
@@ -131,10 +130,6 @@ def make_filters(difficulty: Difficulty) -> tuple[list[AudioFilterConfig], list[
 
 def filters_to_plain(filters: list[AudioFilterConfig]) -> list[dict[str, Any]]:
     return [f.model_dump() for f in filters]
-
-
-def clone_filters(filters: list[AudioFilterConfig]) -> list[AudioFilterConfig]:
-    return [AudioFilterConfig.model_validate(deepcopy(f.model_dump())) for f in filters]
 
 
 def _param_accuracy(target_param: AudioFilterParam, player_value: float, difficulty: Difficulty) -> float:

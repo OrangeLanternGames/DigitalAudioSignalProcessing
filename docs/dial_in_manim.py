@@ -309,7 +309,7 @@ class ScoreScene(Scene):
             Text("compares slider values to hidden target values", font_size=22, color=C_DIM),
             Text("Spectral score", font_size=28, color=C_GREEN),
             Text("compares FFT magnitude shapes of rendered WAV files", font_size=22, color=C_DIM),
-            Text("Final: 65% parameters + 35% spectrum", font_size=30, color=C_HI),
+            Text("Final: 80% parameters + 20% spectrum", font_size=30, color=C_HI),
         ).arrange(DOWN, buff=0.25)
         meter = Rectangle(width=7.5, height=0.35, color=C_DIM).shift(DOWN * 2.6)
         fill = Rectangle(width=6.2, height=0.28, color=C_GREEN, fill_color=C_GREEN, fill_opacity=0.9).align_to(meter, LEFT).move_to(meter.get_center() + LEFT * 0.65)

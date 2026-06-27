@@ -77,19 +77,6 @@ def save_wav(path: Path, signal: np.ndarray, sr: int = TARGET_SR) -> None:
     wavfile.write(path, sr, (normalize(signal) * 32767).astype(np.int16))
 
 
-def generate_test_signal(duration: float = 8.0, sr: int = TARGET_SR) -> np.ndarray:
-    rng = np.random.default_rng(7)
-    t = np.linspace(0, duration, int(duration * sr), endpoint=False, dtype=np.float32)
-    sig = (
-        0.18 * np.sin(2 * np.pi * 85 * t)
-        + 0.16 * np.sin(2 * np.pi * 420 * t)
-        + 0.15 * np.sin(2 * np.pi * 1600 * t)
-        + 0.12 * np.sin(2 * np.pi * 5200 * t)
-        + 0.05 * rng.standard_normal(len(t)).astype(np.float32)
-    )
-    return normalize(sig)
-
-
 def apply_eq4(signal: np.ndarray, gains_db: dict[str, float]) -> np.ndarray:
     out = np.zeros(len(signal), dtype=np.float64)
     sig = signal.astype(np.float64)
