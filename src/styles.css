@@ -196,6 +196,9 @@ body { -webkit-font-smoothing:none; image-rendering:pixelated; }
 .slider{ display:flex; flex-direction:column; gap:5px; }
 .slider .lab{ display:flex; justify-content:space-between; font-size:9px; color:var(--dim); }
 .slider .lab b{ color:var(--fg); font-weight:400; }
+.slider.keysel .lab{ color:var(--hi); text-shadow:0 0 5px color-mix(in srgb,var(--hi) 55%, transparent); }
+.slider.keysel input[type=range]::-webkit-slider-runnable-track{ border-color:var(--hi); }
+.slider.keysel input[type=range]::-moz-range-track{ border-color:var(--hi); }
 input[type=range]{
   -webkit-appearance:none; appearance:none; width:100%; height:14px; background:transparent; cursor:pointer;
   accent-color:var(--fg);

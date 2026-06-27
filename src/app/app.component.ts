@@ -10,12 +10,12 @@ import { Difficulty, Score } from './core/dial-model';
 type Screen = 'boot' | 'landing' | 'difficulty' | 'game';
 
 const SEED_SCORES: Score[] = [
-  { name: 'NEO', pct: 97.4, diff: 'hard' },
-  { name: 'VX9', pct: 91.2, diff: 'hard' },
-  { name: 'ECHO', pct: 88.0, diff: 'medium' },
-  { name: 'KAI', pct: 81.6, diff: 'medium' },
-  { name: 'M0DE', pct: 74.3, diff: 'easy' },
-  { name: 'RAW', pct: 69.9, diff: 'easy' },
+  { name: 'NEO', pct: 97.4, diff: 'random' },
+  { name: 'VX9', pct: 91.2, diff: 'distortion' },
+  { name: 'ECHO', pct: 88.0, diff: 'echo' },
+  { name: 'KAI', pct: 81.6, diff: 'eq4' },
+  { name: 'M0DE', pct: 74.3, diff: 'echo' },
+  { name: 'RAW', pct: 69.9, diff: 'eq4' },
 ];
 
 @Component({
@@ -37,7 +37,7 @@ const SEED_SCORES: Score[] = [
           <app-difficulty [theme]="theme" (selected)="onSelectDiff($event)" (back)="flow('landing')"></app-difficulty>
         }
         @case ('game') {
-          <app-game [theme]="theme" [difficulty]="difficulty"
+          <app-game [theme]="theme" [difficulty]="difficulty" [volume]="volume"
                     (completed)="onComplete($event)" (exit)="flow('landing')"></app-game>
         }
       }
@@ -56,7 +56,7 @@ export class AppComponent implements OnInit {
   theme = 'ammo8';
   volume = 70;
   scores: Score[] = SEED_SCORES;
-  difficulty: Difficulty = 'medium';
+  difficulty: Difficulty = 'eq4';
 
   constructor(private ls: StorageService) {}
 
