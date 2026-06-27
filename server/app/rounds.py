@@ -15,7 +15,9 @@ from .models import AudioFilterConfig, AudioFilterParam, Difficulty, ScoreDetail
 # near-exact dial reads as a clean 100%. Larger TOL_FRACTION = more forgiving.
 TOL_FRACTION = 0.18          # sigma as a fraction of each parameter's span
 PERFECT_FRACTION = 0.03      # |error| within this fraction of span => full 100%
-DIFFICULTY_TOL = {"easy": 1.25, "medium": 1.0, "hard": 0.8}  # gentle progression
+# Per-mode scoring tolerance: single filters are forgiving, the combined "random"
+# mode is a touch stricter. Unknown modes fall back to 1.0 via .get().
+DIFFICULTY_TOL = {"eq4": 1.0, "echo": 1.0, "distortion": 1.0, "chorus": 1.0, "random": 0.9, "all": 0.8}
 
 
 PARAM_RANGES: dict[str, dict[str, tuple[float, float, float, str | None, str]]] = {
@@ -24,6 +26,11 @@ PARAM_RANGES: dict[str, dict[str, tuple[float, float, float, str | None, str]]] 
         "lowMid": (-12.0, 12.0, 0.1, "dB", "Low Mid"),
         "highMid": (-12.0, 12.0, 0.1, "dB", "High Mid"),
         "treble": (-12.0, 12.0, 0.1, "dB", "Treble"),
+    },
+    "chorus": {
+        "rateHz":  (0.1, 5.0,  0.01, "Hz", "Rate"),
+        "depthMs": (1.0, 15.0, 0.1,  "ms", "Depth"),
+        "mix":     (0.0, 0.8,  0.01, None, "Mix"),
     },
     "echo": {
         "delayMs": (80.0, 620.0, 1.0, "ms", "Delay"),
@@ -36,12 +43,28 @@ PARAM_RANGES: dict[str, dict[str, tuple[float, float, float, str | None, str]]] 
     },
 }
 
-FILTER_LABELS = {"eq4": "4-Band FIR EQ", "echo": "Echo Delay", "distortion": "Distortion"}
-DIFFICULTY_FILTERS: dict[Difficulty, list[str]] = {
-    "easy": ["eq4"],
-    "medium": ["eq4", "echo"],
-    "hard": ["eq4", "echo", "distortion"],
+FILTER_LABELS = {"eq4": "4-Band FIR EQ", "chorus": "Chorus", "echo": "Echo Delay", "distortion": "Distortion"}
+ALL_FILTERS = ["eq4", "chorus", "echo", "distortion"]
+# Each mode maps to the filter(s) the round uses. "random" is resolved per-round
+# in filters_for_mode() to a random pair, so it is not listed here.
+DIFFICULTY_FILTERS: dict[str, list[str]] = {
+    "eq4": ["eq4"],
+    "chorus": ["chorus"],
+    "echo": ["echo"],
+    "distortion": ["distortion"],
 }
+
+
+def filters_for_mode(mode: str, rng: random.Random) -> list[str]:
+    """Which filters a round uses. 'random' picks two distinct filters and 'all'
+    uses every filter, both kept in the canonical eq4->echo->distortion order so
+    the chain/UI stay consistent."""
+    if mode == "all":
+        return list(ALL_FILTERS)
+    if mode == "random":
+        chosen = set(rng.sample(ALL_FILTERS, 2))
+        return [f for f in ALL_FILTERS if f in chosen]
+    return DIFFICULTY_FILTERS.get(mode, ["eq4"])
 
 
 def _param(filter_type: str, key: str, value: float) -> AudioFilterParam:
@@ -61,6 +84,7 @@ def _param(filter_type: str, key: str, value: float) -> AudioFilterParam:
 # would otherwise be penalised for something they can't hear.
 ZERO_AT_CLEAN: dict[str, set[str]] = {
     "eq4": {"bass", "lowMid", "highMid", "treble"},
+    "chorus": {"mix"},
     "echo": {"feedback", "mix"},
     "distortion": {"drive"},
 }
@@ -70,9 +94,9 @@ def make_filters(difficulty: Difficulty) -> tuple[list[AudioFilterConfig], list[
     rng = random.Random()
     target: list[AudioFilterConfig] = []  # clean goal (what the player restores to)
     player: list[AudioFilterConfig] = []  # manipulated start (applied on MANIPULATE)
-    eq_span = 7.0 if difficulty == "easy" else 10.0
+    eq_span = 10.0
 
-    for filter_type in DIFFICULTY_FILTERS[difficulty]:
+    for filter_type in filters_for_mode(difficulty, rng):
         goal_params: list[AudioFilterParam] = []
         start_params: list[AudioFilterParam] = []
         for key, (mn, mx, _step, _unit, _label) in PARAM_RANGES[filter_type].items():
@@ -80,6 +104,12 @@ def make_filters(difficulty: Difficulty) -> tuple[list[AudioFilterConfig], list[
             if filter_type == "eq4":
                 magnitude = rng.uniform(2.0, eq_span)
                 start = magnitude if rng.random() < 0.5 else -magnitude
+            elif filter_type == "chorus" and key == "rateHz":
+                start = rng.uniform(0.3, 4.0)
+            elif filter_type == "chorus" and key == "depthMs":
+                start = rng.uniform(3.0, 12.0)
+            elif filter_type == "chorus" and key == "mix":
+                start = rng.uniform(0.35, 0.7)
             elif filter_type == "echo" and key == "delayMs":
                 start = rng.uniform(120, 520)
             elif filter_type == "echo":
@@ -121,7 +151,7 @@ def _param_accuracy(target_param: AudioFilterParam, player_value: float, difficu
 def parameter_score(
     target: list[AudioFilterConfig],
     player: list[AudioFilterConfig],
-    difficulty: Difficulty = "medium",
+    difficulty: Difficulty = "eq4",
 ) -> tuple[float, list[ScoreDetail]]:
     player_by_type = {f.type: f for f in player}
     details: list[ScoreDetail] = []

@@ -4,8 +4,11 @@ from typing import Literal
 
 from pydantic import BaseModel, Field
 
-Difficulty = Literal["easy", "medium", "hard"]
-FilterType = Literal["eq4", "echo", "distortion"]
+# A "mode" selects which manipulation(s) a round uses: one of the three single
+# filters, or "random" which combines two of them. The name stays `Difficulty`
+# for backwards compatibility across the request/response models.
+Difficulty = Literal["eq4", "echo", "distortion", "chorus", "random", "all"]
+FilterType = Literal["eq4", "echo", "distortion", "chorus"]
 
 
 class AudioFileInfo(BaseModel):
@@ -41,7 +44,7 @@ class WaveformPeaks(BaseModel):
 
 
 class CreateRoundRequest(BaseModel):
-    difficulty: Difficulty = "medium"
+    difficulty: Difficulty = "eq4"
     fileId: str | None = None
 
 

@@ -128,12 +128,15 @@ type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
                   @if (apiUnavailable) { <span class="dim"> // SIM</span> }
                 </span>
               </div>
-              @if (playsLeft > 0) {
-                <button class="btn big focusable" (click)="doListen()" [disabled]="playing">
-                  {{ playing ? '▶ PLAYING…' : '▶ PLAY ORIGINAL' }}</button>
-              } @else {
-                <button class="btn big focusable" (click)="doManipulate()">⚡ MANIPULATE ▸</button>
-              }
+              <div style="display:flex;gap:10px">
+                @if (playsLeft > 0) {
+                  <button class="btn big focusable" (click)="doListen()" [disabled]="playing">
+                    {{ playing ? '▶ PLAYING…' : '▶ PLAY ORIGINAL' }}</button>
+                }
+                @if (playsLeft < 3) {
+                  <button class="btn big focusable" (click)="doManipulate()" [disabled]="playing">MANIPULATE</button>
+                }
+              </div>
             </div>
           }
 
@@ -197,7 +200,7 @@ type Phase = 'listen' | 'dial' | 'reveal' | 'sign';
 })
 export class GameComponent implements OnInit, OnDestroy {
   @Input() theme = 'ammo8';
-  @Input() difficulty: Difficulty = 'medium';
+  @Input() difficulty: Difficulty = 'eq4';
   @Input() volume = 70;
   @Output() completed = new EventEmitter<Score>();
   @Output() exit = new EventEmitter<void>();
@@ -323,11 +326,6 @@ export class GameComponent implements OnInit, OnDestroy {
   doManipulate(): void {
     if (this.audioRound) {
       this.scrambleAudioFilters();
-      return;
-    }
-    if (this.difficulty === 'easy') {
-      this.player = { ...this.player, ...this.round.player };
-      this.phase = 'dial';
       return;
     }
     const proxy: Params = { ...this.round.target };
@@ -525,7 +523,7 @@ export class GameComponent implements OnInit, OnDestroy {
   }
 
   codeForFilter(f: AudioFilterConfig): string {
-    return f.type === 'eq4' ? 'EQ4' : f.type === 'echo' ? 'DLY' : 'DRV';
+    return f.type === 'eq4' ? 'EQ4' : f.type === 'chorus' ? 'CHR' : f.type === 'echo' ? 'DLY' : 'DRV';
   }
 
   private cloneFilters(filters: AudioFilterConfig[]): AudioFilterConfig[] {

@@ -104,15 +104,23 @@ def apply_echo(signal: np.ndarray, delay_ms: float, feedback: float, mix: float)
     fb = float(np.clip(feedback, 0.0, 0.85))
     wet_mix = float(np.clip(mix, 0.0, 0.8))
     # Performance: a feedback echo is the IIR recurrence y[n] = x[n] + fb*y[n-delay].
-    # A per-sample Python loop is O(N) interpreted (up to ~2.6M iterations for a 60s
-    # clip) and runs on every round-create, preview and score request. We express the
-    # same recurrence as a transfer function 1 / (1 - fb*z^-delay) and let
-    # scipy.signal.lfilter run it in compiled C (~100x faster). Stable by construction:
-    # fb is clipped to < 1, so all poles stay inside the unit circle.
-    a = np.zeros(delay + 1, dtype=np.float64)
-    a[0] = 1.0
-    a[delay] = -fb
-    wet = lfilter([1.0], a, signal.astype(np.float64))
+    # Expressing it as the single transfer function 1 / (1 - fb*z^-delay) and feeding
+    # that to lfilter is a trap: lfilter walks every one of the `delay`+1 denominator
+    # coefficients (mostly zeros) per output sample, so it costs O(N*delay) — for a 60s
+    # clip and a 520ms delay that is ~6e10 ops, far slower than the naive O(N) loop.
+    #
+    # Instead note the recurrence only couples samples `delay` apart, i.e. it is `delay`
+    # INDEPENDENT first-order IIR filters, one per phase r = n mod delay. Reshape the
+    # signal into rows of length `delay` (so each column is one phase) and run a single
+    # order-1 filter down the columns in compiled C: total work O(N), identical result.
+    # Stable by construction: fb is clipped to < 1, so the pole stays inside the unit circle.
+    x = signal.astype(np.float64)
+    n = x.size
+    pad = (-n) % delay
+    if pad:
+        x = np.concatenate([x, np.zeros(pad, dtype=np.float64)])
+    cols = x.reshape(-1, delay)  # row i, column r -> sample i*delay + r
+    wet = lfilter([1.0], [1.0, -fb], cols, axis=0).reshape(-1)[:n]
     return normalize(signal * (1.0 - wet_mix) + wet * wet_mix)
 
 
@@ -120,6 +128,46 @@ def apply_distortion(signal: np.ndarray, drive: float, output_gain: float) -> np
     amount = 1.0 + float(np.clip(drive, 0.0, 1.0)) * 18.0
     shaped = np.tanh(signal.astype(np.float32) * amount) / np.tanh(amount)
     return normalize(shaped * float(np.clip(output_gain, 0.35, 1.2)))
+
+
+def apply_chorus(signal: np.ndarray, rate_hz: float, depth_ms: float, mix: float) -> np.ndarray:
+    # Modulated delay line — classic chorus implemented from scratch.
+    #
+    # A sine LFO varies the read position around a fixed base delay:
+    #   delay(n) = BASE_MS + depth_ms * sin(2π * rate_hz * n / sr)
+    #
+    # Fractional delay is resolved with linear interpolation between the two
+    # neighbouring integer samples, matching the Week 11 lab implementation.
+    # The LFO is computed all at once with numpy; the read positions are integer-
+    # indexed with out-of-bounds frames (before t=0) clamped to zero — no scipy.
+    BASE_DELAY_MS = 20.0
+    rate     = float(np.clip(rate_hz, 0.1, 5.0))
+    depth    = float(np.clip(depth_ms, 1.0, 15.0))
+    wet_mix  = float(np.clip(mix, 0.0, 0.8))
+
+    sig = signal.astype(np.float64)
+    n   = len(sig)
+
+    # LFO — one sine cycle per 1/rate seconds
+    t            = np.arange(n, dtype=np.float64) / TARGET_SR
+    delay_samps  = (BASE_DELAY_MS + depth * np.sin(2.0 * np.pi * rate * t)) / 1000.0 * TARGET_SR
+
+    # Read positions in the past (fractional)
+    read_pos = np.arange(n, dtype=np.float64) - delay_samps
+
+    # Split into integer floor and fractional remainder
+    i_floor = np.floor(read_pos).astype(np.int64)
+    frac    = read_pos - i_floor          # always in [0, 1)
+    i_ceil  = i_floor + 1
+
+    # Gather samples; treat any read before the signal start as silence
+    in_s0 = (i_floor >= 0) & (i_floor < n)
+    in_s1 = (i_ceil  >= 0) & (i_ceil  < n)
+    s0 = np.where(in_s0, sig[np.clip(i_floor, 0, n - 1)], 0.0)
+    s1 = np.where(in_s1, sig[np.clip(i_ceil,  0, n - 1)], 0.0)
+
+    wet = s0 * (1.0 - frac) + s1 * frac
+    return normalize(sig * (1.0 - wet_mix) + wet * wet_mix)
 
 
 def filter_values(filters: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
@@ -134,6 +182,9 @@ def render_chain(source: np.ndarray, filters: list[dict[str, Any]]) -> np.ndarra
     out = source.copy()
     if "eq4" in values:
         out = apply_eq4(out, values["eq4"])
+    if "chorus" in values:
+        ch = values["chorus"]
+        out = apply_chorus(out, ch.get("rateHz", 0.8), ch.get("depthMs", 7.0), ch.get("mix", 0.4))
     if "echo" in values:
         echo = values["echo"]
         out = apply_echo(out, echo.get("delayMs", 220), echo.get("feedback", 0.25), echo.get("mix", 0.25))

@@ -1,6 +1,6 @@
 import { Difficulty } from './dial-model';
 
-export type AudioFilterType = 'eq4' | 'echo' | 'distortion';
+export type AudioFilterType = 'eq4' | 'chorus' | 'echo' | 'distortion';
 
 export interface AudioFileInfo {
   fileId: string;
