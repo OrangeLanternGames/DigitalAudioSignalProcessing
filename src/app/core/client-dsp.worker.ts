@@ -1,7 +1,7 @@
 /// <reference lib="webworker" />
 import {
   BANDS, NUM_TAPS,
-  applyDistortion, applyEcho, applyEq4Freq, buildFilters, fft, nextPow2, normalize, waveformPeaks,
+  applyChorus, applyDistortion, applyEcho, applyEq4Freq, buildFilters, fft, nextPow2, normalize, waveformPeaks,
 } from './dsp';
 
 // Runs the client DSP off the main thread so slider drags never block the UI.
@@ -41,6 +41,10 @@ function render(values: Record<string, Record<string, number>>): number[] {
   let out = source;
   if (values['eq4']) {
     out = applyEq4Freq(source.length, fftSize, sigRe, sigIm, bandRe, bandIm, values['eq4']);
+  }
+  if (values['chorus']) {
+    const c = values['chorus'];
+    out = applyChorus(out, sr, c['rateHz'] ?? 0.8, c['depthMs'] ?? 7.0, c['mix'] ?? 0.4);
   }
   if (values['echo']) {
     const e = values['echo'];

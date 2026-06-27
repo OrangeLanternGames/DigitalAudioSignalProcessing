@@ -130,6 +130,46 @@ def apply_distortion(signal: np.ndarray, drive: float, output_gain: float) -> np
     return normalize(shaped * float(np.clip(output_gain, 0.35, 1.2)))
 
 
+def apply_chorus(signal: np.ndarray, rate_hz: float, depth_ms: float, mix: float) -> np.ndarray:
+    # Modulated delay line — classic chorus implemented from scratch.
+    #
+    # A sine LFO varies the read position around a fixed base delay:
+    #   delay(n) = BASE_MS + depth_ms * sin(2π * rate_hz * n / sr)
+    #
+    # Fractional delay is resolved with linear interpolation between the two
+    # neighbouring integer samples, matching the Week 11 lab implementation.
+    # The LFO is computed all at once with numpy; the read positions are integer-
+    # indexed with out-of-bounds frames (before t=0) clamped to zero — no scipy.
+    BASE_DELAY_MS = 20.0
+    rate     = float(np.clip(rate_hz, 0.1, 5.0))
+    depth    = float(np.clip(depth_ms, 1.0, 15.0))
+    wet_mix  = float(np.clip(mix, 0.0, 0.8))
+
+    sig = signal.astype(np.float64)
+    n   = len(sig)
+
+    # LFO — one sine cycle per 1/rate seconds
+    t            = np.arange(n, dtype=np.float64) / TARGET_SR
+    delay_samps  = (BASE_DELAY_MS + depth * np.sin(2.0 * np.pi * rate * t)) / 1000.0 * TARGET_SR
+
+    # Read positions in the past (fractional)
+    read_pos = np.arange(n, dtype=np.float64) - delay_samps
+
+    # Split into integer floor and fractional remainder
+    i_floor = np.floor(read_pos).astype(np.int64)
+    frac    = read_pos - i_floor          # always in [0, 1)
+    i_ceil  = i_floor + 1
+
+    # Gather samples; treat any read before the signal start as silence
+    in_s0 = (i_floor >= 0) & (i_floor < n)
+    in_s1 = (i_ceil  >= 0) & (i_ceil  < n)
+    s0 = np.where(in_s0, sig[np.clip(i_floor, 0, n - 1)], 0.0)
+    s1 = np.where(in_s1, sig[np.clip(i_ceil,  0, n - 1)], 0.0)
+
+    wet = s0 * (1.0 - frac) + s1 * frac
+    return normalize(sig * (1.0 - wet_mix) + wet * wet_mix)
+
+
 def filter_values(filters: list[dict[str, Any]]) -> dict[str, dict[str, float]]:
     result: dict[str, dict[str, float]] = {}
     for flt in filters:
@@ -142,6 +182,9 @@ def render_chain(source: np.ndarray, filters: list[dict[str, Any]]) -> np.ndarra
     out = source.copy()
     if "eq4" in values:
         out = apply_eq4(out, values["eq4"])
+    if "chorus" in values:
+        ch = values["chorus"]
+        out = apply_chorus(out, ch.get("rateHz", 0.8), ch.get("depthMs", 7.0), ch.get("mix", 0.4))
     if "echo" in values:
         echo = values["echo"]
         out = apply_echo(out, echo.get("delayMs", 220), echo.get("feedback", 0.25), echo.get("mix", 0.25))

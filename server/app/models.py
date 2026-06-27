@@ -7,8 +7,8 @@ from pydantic import BaseModel, Field
 # A "mode" selects which manipulation(s) a round uses: one of the three single
 # filters, or "random" which combines two of them. The name stays `Difficulty`
 # for backwards compatibility across the request/response models.
-Difficulty = Literal["eq4", "echo", "distortion", "random", "all"]
-FilterType = Literal["eq4", "echo", "distortion"]
+Difficulty = Literal["eq4", "echo", "distortion", "chorus", "random", "all"]
+FilterType = Literal["eq4", "echo", "distortion", "chorus"]
 
 
 class AudioFileInfo(BaseModel):

@@ -90,7 +90,7 @@ export class DifficultyComponent implements AfterViewInit {
   @Output() back = new EventEmitter<void>();
   @ViewChild('wrap') wrap!: ElementRef<HTMLElement>;
 
-  order: Difficulty[] = ['eq4', 'echo', 'distortion'];
+  order: Difficulty[] = ['eq4', 'chorus', 'echo', 'distortion'];
   randomKey: Difficulty = 'random';
   allKey: Difficulty = 'all';
   meta = DIFF_META;

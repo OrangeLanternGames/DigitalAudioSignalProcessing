@@ -523,7 +523,7 @@ export class GameComponent implements OnInit, OnDestroy {
   }
 
   codeForFilter(f: AudioFilterConfig): string {
-    return f.type === 'eq4' ? 'EQ4' : f.type === 'echo' ? 'DLY' : 'DRV';
+    return f.type === 'eq4' ? 'EQ4' : f.type === 'chorus' ? 'CHR' : f.type === 'echo' ? 'DLY' : 'DRV';
   }
 
   private cloneFilters(filters: AudioFilterConfig[]): AudioFilterConfig[] {

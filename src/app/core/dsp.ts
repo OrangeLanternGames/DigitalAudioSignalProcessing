@@ -167,6 +167,34 @@ export function applyEcho(signal: Float64Array, sr: number, delayMs: number, fee
   return normalize(mixed);
 }
 
+// --- chorus (port of dsp.py apply_chorus) ------------------------------------
+
+export function applyChorus(signal: Float64Array, sr: number, rateHz: number, depthMs: number, mix: number): Float64Array {
+  const BASE_DELAY_MS = 20.0;
+  const rate    = Math.max(0.1, Math.min(5.0,  rateHz));
+  const depth   = Math.max(1.0, Math.min(15.0, depthMs));
+  const wetMix  = Math.max(0.0, Math.min(0.8,  mix));
+  const n       = signal.length;
+  const wet     = new Float64Array(n);
+
+  for (let i = 0; i < n; i++) {
+    const lfo         = Math.sin(2.0 * Math.PI * rate * i / sr);
+    const delaySamps  = (BASE_DELAY_MS + depth * lfo) / 1000.0 * sr;
+    const iFloor      = Math.floor(i - delaySamps);
+    const frac        = (i - delaySamps) - iFloor;
+    const iCeil       = iFloor + 1;
+    const s0 = (iFloor >= 0 && iFloor < n) ? signal[iFloor] : 0.0;
+    const s1 = (iCeil  >= 0 && iCeil  < n) ? signal[iCeil]  : 0.0;
+    wet[i] = s0 * (1.0 - frac) + s1 * frac;
+  }
+
+  const out = new Float64Array(n);
+  for (let i = 0; i < n; i++) {
+    out[i] = signal[i] * (1.0 - wetMix) + wet[i] * wetMix;
+  }
+  return normalize(out);
+}
+
 export function applyDistortion(signal: Float64Array, drive: number, outputGain: number): Float64Array {
   const amount = 1.0 + Math.min(1, Math.max(0, drive)) * 18.0;
   const tanhAmount = Math.tanh(amount);

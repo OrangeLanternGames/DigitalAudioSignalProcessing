@@ -9,9 +9,9 @@ export interface ParamDesc {
 
 export type ParamKey = 'freq' | 'amp' | 'phase' | 'harm' | 'drive';
 export type Params = Record<string, number>;
-// A "mode" selects which manipulation a round uses: one of the three filters, or
+// A "mode" selects which manipulation a round uses: one of the four filters, or
 // "random" which combines two of them. Named Difficulty for backwards compat.
-export type Difficulty = 'eq4' | 'echo' | 'distortion' | 'random' | 'all';
+export type Difficulty = 'eq4' | 'chorus' | 'echo' | 'distortion' | 'random' | 'all';
 
 export const PARAMS: Record<string, ParamDesc> = {
   freq:  { key: 'freq',  label: 'FREQUENCY', code: 'FRQ', min: 0.6, max: 5.0,         disp: (v) => (v * 44.1).toFixed(0) + 'hz' },
@@ -25,6 +25,7 @@ export const PARAMS: Record<string, ParamDesc> = {
 // params get scrambled when the audio API is unavailable.
 export const DIFF_KEYS: Record<Difficulty, ParamKey[]> = {
   eq4:        ['freq', 'amp', 'phase', 'harm'],
+  chorus:     ['freq', 'amp', 'phase'],
   echo:       ['freq', 'amp', 'phase'],
   distortion: ['drive', 'amp'],
   random:     ['freq', 'amp', 'phase'],
@@ -34,6 +35,7 @@ export const DIFF_KEYS: Record<Difficulty, ParamKey[]> = {
 export interface DiffMeta { name: string; sliders: number; label: string; desc: string; }
 export const DIFF_META: Record<Difficulty, DiffMeta> = {
   eq4:        { name: '4-BAND FIR EQ', sliders: 4, label: 'FREQUENCY SHAPING', desc: 'FOUR EQ BANDS.\nSCULPT THE TONE.' },
+  chorus:     { name: 'CHORUS',        sliders: 3, label: 'RATE / DEPTH / MIX', desc: 'MODULATED DELAY.\nDIAL OUT THE SWIRL.' },
   echo:       { name: 'ECHO DELAY',    sliders: 3, label: 'TIME / FEEDBACK',   desc: 'DELAY, FEEDBACK,\nMIX. TAME THE TAIL.' },
   distortion: { name: 'DISTORTION',    sliders: 2, label: 'DRIVE / OUTPUT',    desc: 'DRIVE AND OUTPUT.\nDIAL OUT THE GRIT.' },
   random:     { name: 'RANDOM',        sliders: 2, label: 'TWO COMBINED',      desc: 'TWO RANDOM FILTERS\nCHAINED TOGETHER.' },
