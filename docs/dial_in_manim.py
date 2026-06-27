@@ -1,11 +1,12 @@
 """Manim scenes for the Angular + FastAPI DIAL IN implementation.
 
-The documentation focus is the three audio filters of the DSP chain
-(server/app/dsp.py):
+The documentation focus is the four audio filters of the DSP chain
+(server/app/dsp.py), in the order render_chain applies them:
 
     Filter 1  EQ4         -> Eq4Scene          (4-band FIR equalizer)
-    Filter 2  Echo        -> EchoScene         (feedback delay / IIR recurrence)
-    Filter 3  Distortion  -> DistortionScene   (tanh waveshaper)
+    Filter 2  Chorus      -> ChorusScene       (LFO-modulated fractional delay)
+    Filter 3  Echo        -> EchoScene         (feedback delay / IIR recurrence)
+    Filter 4  Distortion  -> DistortionScene   (tanh waveshaper)
 
 The surrounding pipeline and the score stay as supporting context:
 
@@ -80,6 +81,27 @@ def band_response(h: np.ndarray, grid: np.ndarray, sr: int = TARGET_SR, n_fft: i
 
 def tanh_shape(x: np.ndarray, amount: float) -> np.ndarray:
     return np.tanh(x * amount) / np.tanh(amount)
+
+
+def chorus_delay_ms(t: np.ndarray, rate_hz: float, depth_ms: float, base_ms: float = 20.0) -> np.ndarray:
+    """LFO-modulated delay time in ms (mirrors apply_chorus)."""
+    return base_ms + depth_ms * np.sin(2.0 * np.pi * rate_hz * t)
+
+
+def chorus_wet(sig: np.ndarray, sr: int, rate_hz: float, depth_ms: float, base_ms: float = 20.0) -> np.ndarray:
+    """Fractional-delay wet signal via linear interpolation (mirrors apply_chorus)."""
+    n = len(sig)
+    t = np.arange(n, dtype=np.float64) / sr
+    delay_samps = chorus_delay_ms(t, rate_hz, depth_ms, base_ms) / 1000.0 * sr
+    read_pos = np.arange(n, dtype=np.float64) - delay_samps
+    i_floor = np.floor(read_pos).astype(np.int64)
+    frac = read_pos - i_floor
+    i_ceil = i_floor + 1
+    in0 = (i_floor >= 0) & (i_floor < n)
+    in1 = (i_ceil >= 0) & (i_ceil < n)
+    s0 = np.where(in0, sig[np.clip(i_floor, 0, n - 1)], 0.0)
+    s1 = np.where(in1, sig[np.clip(i_ceil, 0, n - 1)], 0.0)
+    return s0 * (1.0 - frac) + s1 * frac
 
 
 class ApiFlowScene(Scene):
@@ -178,12 +200,77 @@ class Eq4Scene(Scene):
         self.wait(2.5)
 
 
-class EchoScene(Scene):
-    """Filter 2 — feedback echo / delay (apply_echo)."""
+class ChorusScene(Scene):
+    """Filter 2 — LFO-modulated fractional delay / chorus (apply_chorus)."""
 
     def construct(self):
         self.camera.background_color = C_BG
-        title = Text("Filter 2 — Echo (Feedback Delay)", font_size=36, color=C_HI).to_edge(UP)
+        title = Text("Filter 2 — Chorus (Modulated Delay)", font_size=34, color=C_HI).to_edge(UP)
+        self.play(Write(title))
+
+        base_ms, depth_ms, rate_hz = 20.0, 8.0, 1.2
+
+        # Left: the LFO that modulates the delay time, delay(t) = 20 ms + depth·sin(2π·rate·t)
+        ax1 = Axes(
+            x_range=[0, 2.0, 0.5], y_range=[10, 30, 5],
+            x_length=4.8, y_length=3.4, tips=False, axis_config={"color": C_DIM},
+        ).shift(LEFT * 3.3 + DOWN * 0.2)
+        ax1_hdr = Text("LFO modulates the delay", font_size=20, color=C_FG).next_to(ax1, UP, buff=0.1)
+        ax1_t = Text("Time [s]", font_size=15, color=C_DIM).next_to(ax1, DOWN, buff=0.1)
+        ax1_y = Text("Delay [ms]", font_size=15, color=C_DIM).next_to(ax1, LEFT, buff=0.1)
+
+        tt = np.linspace(0, 2.0, 400)
+        delay_curve = chorus_delay_ms(tt, rate_hz, depth_ms, base_ms)
+        base_line = DashedLine(ax1.c2p(0, base_ms), ax1.c2p(2.0, base_ms), color=C_DIM, stroke_width=2)
+        delay_graph = ax1.plot_line_graph(tt.tolist(), delay_curve.tolist(), line_color=C_GREEN,
+                                          add_vertex_dots=False, stroke_width=3)
+
+        self.play(Create(ax1), Write(ax1_hdr), Write(ax1_t), Write(ax1_y))
+        self.play(Create(base_line))
+        self.play(Create(delay_graph), run_time=1.5)
+        self.wait(0.4)
+
+        # Right: dry sine vs the chorused (fractionally delayed) copy — real interpolation
+        ax2 = Axes(
+            x_range=[0, 1.0, 0.25], y_range=[-1.2, 1.2, 0.5],
+            x_length=4.8, y_length=3.4, tips=False, axis_config={"color": C_DIM},
+        ).shift(RIGHT * 3.3 + DOWN * 0.2)
+        ax2_hdr = Text("Dry vs chorused copy", font_size=20, color=C_FG).next_to(ax2, UP, buff=0.1)
+        ax2_t = Text("Time", font_size=15, color=C_DIM).next_to(ax2, DOWN, buff=0.1)
+
+        sr = 4000
+        td = np.linspace(0, 1.0, sr, endpoint=False)
+        dry = np.sin(2 * np.pi * 6 * td)
+        wet = chorus_wet(dry, sr, rate_hz, depth_ms, base_ms)
+        dry_graph = ax2.plot_line_graph(td[::8].tolist(), dry[::8].tolist(), line_color=C_BLUE,
+                                        add_vertex_dots=False, stroke_width=2)
+        wet_graph = ax2.plot_line_graph(td[::8].tolist(), wet[::8].tolist(), line_color=C_RED,
+                                        add_vertex_dots=False, stroke_width=2.5)
+        io_lbls = VGroup(
+            Text("dry", font_size=15, color=C_BLUE),
+            Text("delayed copy", font_size=15, color=C_RED),
+        ).arrange(RIGHT, buff=0.4).next_to(ax2, DOWN, buff=0.35)
+
+        self.play(Create(ax2), Write(ax2_hdr), Write(ax2_t))
+        self.play(Create(dry_graph))
+        self.play(Create(wet_graph), FadeIn(io_lbls))
+        self.wait(0.5)
+
+        formula = VGroup(
+            Text("delay(t) = 20 ms + depth · sin(2π · rate · t)", font_size=22, color=C_HI),
+            Text("out = (1 − mix) · dry + mix · interp(x, t − delay)     rate 0.1–5 Hz · depth 1–15 ms · mix ≤ 0.8",
+                 font_size=19, color=C_ACCENT),
+        ).arrange(DOWN, buff=0.16).to_edge(DOWN, buff=0.3)
+        self.play(LaggedStart(*[Write(m) for m in formula], lag_ratio=0.3))
+        self.wait(2.5)
+
+
+class EchoScene(Scene):
+    """Filter 3 — feedback echo / delay (apply_echo)."""
+
+    def construct(self):
+        self.camera.background_color = C_BG
+        title = Text("Filter 3 — Echo (Feedback Delay)", font_size=36, color=C_HI).to_edge(UP)
         self.play(Write(title))
 
         ax = Axes(
@@ -232,11 +319,11 @@ class EchoScene(Scene):
 
 
 class DistortionScene(Scene):
-    """Filter 3 — tanh waveshaper (apply_distortion)."""
+    """Filter 4 — tanh waveshaper (apply_distortion)."""
 
     def construct(self):
         self.camera.background_color = C_BG
-        title = Text("Filter 3 — Distortion (tanh Waveshaper)", font_size=34, color=C_HI).to_edge(UP)
+        title = Text("Filter 4 — Distortion (tanh Waveshaper)", font_size=34, color=C_HI).to_edge(UP)
         self.play(Write(title))
 
         # Left: transfer curve y = tanh(x·amount)/tanh(amount)
@@ -321,7 +408,7 @@ class ScoreScene(Scene):
 
 class DialInApiPresentation(Scene):
     def construct(self):
-        scenes = (ApiFlowScene, Eq4Scene, EchoScene, DistortionScene, ScoreScene)
+        scenes = (ApiFlowScene, Eq4Scene, ChorusScene, EchoScene, DistortionScene, ScoreScene)
         for scene in scenes:
             scene.construct(self)
             self.play(*[FadeOut(m) for m in self.mobjects])
